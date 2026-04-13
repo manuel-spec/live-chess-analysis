@@ -1,14 +1,14 @@
-import { sanitizeFen } from '../utils/inputValidator';
+import { sanitizeFen } from "../utils/inputValidator";
 
-const DEFAULT_ENGINE_PATH = '/stockfish/stockfish-windows-x86-64.exe';
+const DEFAULT_ENGINE_PATH = "/stockfish/stockfish-windows-x86-64.exe";
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
 
 type DataHandler = (chunk: unknown) => void;
 type ExitHandler = (code: number | null, signal: string | null) => void;
 
 interface StreamLike {
-  on(event: 'data', handler: DataHandler): void;
-  off?(event: 'data', handler: DataHandler): void;
+  on(event: "data", handler: DataHandler): void;
+  off?(event: "data", handler: DataHandler): void;
 }
 
 interface StdinLike {
@@ -19,8 +19,8 @@ interface EngineProcess {
   stdin: StdinLike;
   stdout: StreamLike;
   stderr: StreamLike;
-  on(event: 'exit', handler: ExitHandler): void;
-  off?(event: 'exit', handler: ExitHandler): void;
+  on(event: "exit", handler: ExitHandler): void;
+  off?(event: "exit", handler: ExitHandler): void;
   kill(signal?: string): boolean;
 }
 
@@ -38,7 +38,7 @@ export class StockfishService {
   }> = [];
 
   private readonly onStdoutData = (chunk: unknown): void => {
-    const text = String(chunk ?? '');
+    const text = String(chunk ?? "");
     const lines = text
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -58,14 +58,18 @@ export class StockfishService {
     this.process = null;
 
     for (const waiter of this.pendingWaiters) {
-      waiter.reject(new Error('Stockfish process exited unexpectedly'));
+      waiter.reject(new Error("Stockfish process exited unexpectedly"));
     }
     this.pendingWaiters = [];
   };
 
-  constructor(options?: { spawnEngine?: SpawnEngine; handshakeTimeoutMs?: number }) {
+  constructor(options?: {
+    spawnEngine?: SpawnEngine;
+    handshakeTimeoutMs?: number;
+  }) {
     this.spawnEngine = options?.spawnEngine ?? this.defaultSpawnEngine;
-    this.handshakeTimeoutMs = options?.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
+    this.handshakeTimeoutMs =
+      options?.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
   }
 
   async initialize(enginePath: string = DEFAULT_ENGINE_PATH): Promise<void> {
@@ -78,12 +82,18 @@ export class StockfishService {
     this.attachProcessListeners(engine);
 
     try {
-      const waitForUciOk = this.waitForLine((line) => line === 'uciok', this.handshakeTimeoutMs);
-      this.sendCommand('uci');
+      const waitForUciOk = this.waitForLine(
+        (line) => line === "uciok",
+        this.handshakeTimeoutMs,
+      );
+      this.sendCommand("uci");
       await waitForUciOk;
 
-      const waitForReadyOk = this.waitForLine((line) => line === 'readyok', this.handshakeTimeoutMs);
-      this.sendCommand('isready');
+      const waitForReadyOk = this.waitForLine(
+        (line) => line === "readyok",
+        this.handshakeTimeoutMs,
+      );
+      this.sendCommand("isready");
       await waitForReadyOk;
 
       this.initialized = true;
@@ -96,7 +106,7 @@ export class StockfishService {
   }
 
   async analyzePosition(_fen: string, _depth: number): Promise<never> {
-    throw new Error('analyzePosition is not implemented yet');
+    throw new Error("analyzePosition is not implemented yet");
   }
 
   isInitialized(): boolean {
@@ -109,28 +119,31 @@ export class StockfishService {
       return;
     }
 
-    this.sendCommand('quit');
+    this.sendCommand("quit");
     this.detachProcessListeners(this.process);
     this.process.kill();
     this.process = null;
     this.initialized = false;
 
     for (const waiter of this.pendingWaiters) {
-      waiter.reject(new Error('Stockfish service shutdown'));
+      waiter.reject(new Error("Stockfish service shutdown"));
     }
     this.pendingWaiters = [];
   }
 
   private sendCommand(command: string): void {
     if (!this.process) {
-      throw new Error('Stockfish process is not running');
+      throw new Error("Stockfish process is not running");
     }
 
     const safeCommand = sanitizeFen(command) || command;
     this.process.stdin.write(`${safeCommand}\n`);
   }
 
-  private waitForLine(predicate: (line: string) => boolean, timeoutMs: number): Promise<void> {
+  private waitForLine(
+    predicate: (line: string) => boolean,
+    timeoutMs: number,
+  ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       const waiter = { predicate, resolve, reject };
       this.pendingWaiters.push(waiter);
@@ -156,34 +169,43 @@ export class StockfishService {
   }
 
   private resolveWaiters(line: string): void {
-    const matching = this.pendingWaiters.find((waiter) => waiter.predicate(line));
+    const matching = this.pendingWaiters.find((waiter) =>
+      waiter.predicate(line),
+    );
     if (!matching) {
       return;
     }
 
-    this.pendingWaiters = this.pendingWaiters.filter((waiter) => waiter !== matching);
+    this.pendingWaiters = this.pendingWaiters.filter(
+      (waiter) => waiter !== matching,
+    );
     matching.resolve();
   }
 
   private attachProcessListeners(process: EngineProcess): void {
-    process.stdout.on('data', this.onStdoutData);
-    process.stderr.on('data', this.onStderrData);
-    process.on('exit', this.onExit);
+    process.stdout.on("data", this.onStdoutData);
+    process.stderr.on("data", this.onStderrData);
+    process.on("exit", this.onExit);
   }
 
   private detachProcessListeners(process: EngineProcess): void {
     if (process.stdout.off) {
-      process.stdout.off('data', this.onStdoutData);
+      process.stdout.off("data", this.onStdoutData);
     }
     if (process.stderr.off) {
-      process.stderr.off('data', this.onStderrData);
+      process.stderr.off("data", this.onStderrData);
     }
     if (process.off) {
-      process.off('exit', this.onExit);
+      process.off("exit", this.onExit);
     }
   }
 
-  private defaultSpawnEngine = (_enginePath: string, _args: string[] = []): EngineProcess => {
-    throw new Error('No engine spawner provided. Inject spawnEngine when running outside Node.js.');
+  private defaultSpawnEngine = (
+    _enginePath: string,
+    _args: string[] = [],
+  ): EngineProcess => {
+    throw new Error(
+      "No engine spawner provided. Inject spawnEngine when running outside Node.js.",
+    );
   };
 }

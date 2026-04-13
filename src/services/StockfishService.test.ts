@@ -1,5 +1,5 @@
-import { afterEach, describe, it, expect, vi } from 'vitest';
-import { StockfishService } from './StockfishService';
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { StockfishService } from "./StockfishService";
 
 type DataHandler = (chunk: unknown) => void;
 type ExitHandler = (code: number | null, signal: string | null) => void;
@@ -7,11 +7,11 @@ type ExitHandler = (code: number | null, signal: string | null) => void;
 class TestStream {
   private readonly listeners = new Set<DataHandler>();
 
-  on(_event: 'data', handler: DataHandler): void {
+  on(_event: "data", handler: DataHandler): void {
     this.listeners.add(handler);
   }
 
-  off(_event: 'data', handler: DataHandler): void {
+  off(_event: "data", handler: DataHandler): void {
     this.listeners.delete(handler);
   }
 
@@ -34,21 +34,21 @@ class FakeProcess {
       const command = data.trim();
       this.commands.push(command);
 
-      if (command === 'uci') {
-        this.stdout.emit('id name Stockfish\nuciok\n');
+      if (command === "uci") {
+        this.stdout.emit("id name Stockfish\nuciok\n");
       }
 
-      if (command === 'isready') {
-        this.stdout.emit('readyok\n');
+      if (command === "isready") {
+        this.stdout.emit("readyok\n");
       }
     },
   };
 
-  on(_event: 'exit', handler: ExitHandler): void {
+  on(_event: "exit", handler: ExitHandler): void {
     this.exitListeners.add(handler);
   }
 
-  off(_event: 'exit', handler: ExitHandler): void {
+  off(_event: "exit", handler: ExitHandler): void {
     this.exitListeners.delete(handler);
   }
 
@@ -64,36 +64,36 @@ class FakeProcess {
   }
 }
 
-describe('StockfishService', () => {
+describe("StockfishService", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
-  it('initializes with UCI handshake and marks service ready', async () => {
+  it("initializes with UCI handshake and marks service ready", async () => {
     const process = new FakeProcess();
     const spawnEngine = vi.fn().mockReturnValue(process);
 
     const service = new StockfishService({ spawnEngine });
-    await service.initialize('C:/stockfish.exe');
+    await service.initialize("C:/stockfish.exe");
 
-    expect(spawnEngine).toHaveBeenCalledWith('C:/stockfish.exe', []);
-    expect(process.commands).toEqual(['uci', 'isready']);
+    expect(spawnEngine).toHaveBeenCalledWith("C:/stockfish.exe", []);
+    expect(process.commands).toEqual(["uci", "isready"]);
     expect(service.isInitialized()).toBe(true);
   });
 
-  it('shuts down cleanly and sends quit to engine', async () => {
+  it("shuts down cleanly and sends quit to engine", async () => {
     const process = new FakeProcess();
     const service = new StockfishService({ spawnEngine: () => process });
 
     await service.initialize();
     service.shutdown();
 
-    expect(process.commands).toContain('quit');
+    expect(process.commands).toContain("quit");
     expect(service.isInitialized()).toBe(false);
   });
 
-  it('fails initialization when handshake times out', async () => {
+  it("fails initialization when handshake times out", async () => {
     vi.useFakeTimers();
 
     const process = new FakeProcess();
@@ -108,14 +108,16 @@ describe('StockfishService', () => {
     });
 
     const initPromise = service.initialize();
-    const rejection = expect(initPromise).rejects.toThrow('Stockfish handshake timed out after 25ms');
+    const rejection = expect(initPromise).rejects.toThrow(
+      "Stockfish handshake timed out after 25ms",
+    );
     await vi.advanceTimersByTimeAsync(30);
 
     await rejection;
     expect(service.isInitialized()).toBe(false);
   });
 
-  it('resets state when process exits unexpectedly', async () => {
+  it("resets state when process exits unexpectedly", async () => {
     const process = new FakeProcess();
     const service = new StockfishService({ spawnEngine: () => process });
 

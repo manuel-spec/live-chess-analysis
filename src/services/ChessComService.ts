@@ -1,10 +1,10 @@
-import type { LiveGame } from '../types/LiveGame';
-import type { PlayerProfile } from '../types/PlayerProfile';
-import type { Player } from '../types/Player';
-import { CacheManager } from './CacheManager';
-import { isValidFen } from '../utils/fenValidator';
+import type { LiveGame } from "../types/LiveGame";
+import type { PlayerProfile } from "../types/PlayerProfile";
+import type { Player } from "../types/Player";
+import { CacheManager } from "./CacheManager";
+import { isValidFen } from "../utils/fenValidator";
 
-const BASE_URL = 'https://api.chess.com/pub';
+const BASE_URL = "https://api.chess.com/pub";
 const GAME_CACHE_TTL = 45; // seconds (within 30-60s range)
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const MAX_REQUESTS_PER_WINDOW = 300;
@@ -41,7 +41,7 @@ interface ChessComGame {
 /** Raw player profile returned by Chess.com API */
 interface ChessComPlayerProfile {
   player_id: number;
-  '@id': string;
+  "@id": string;
   url: string;
   username: string;
   name?: string;
@@ -67,11 +67,13 @@ export class ChessComService {
       fetchImpl?: FetchLike;
       sleepFn?: (ms: number) => Promise<void>;
       nowFn?: () => number;
-    }
+    },
   ) {
     this.cache = cache ?? new CacheManager();
     this.fetchImpl = deps?.fetchImpl ?? fetch;
-    this.sleepFn = deps?.sleepFn ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.sleepFn =
+      deps?.sleepFn ??
+      ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.nowFn = deps?.nowFn ?? Date.now;
   }
 
@@ -104,7 +106,7 @@ export class ChessComService {
   async fetchPlayerProfile(username: string): Promise<PlayerProfile> {
     const data = await this.fetchJsonWithRetry<ChessComPlayerProfile>(
       `${BASE_URL}/player/${encodeURIComponent(username)}`,
-      `Failed to fetch player profile for "${username}"`
+      `Failed to fetch player profile for "${username}"`,
     );
     return this.transformPlayerProfile(data);
   }
@@ -115,7 +117,7 @@ export class ChessComService {
   async fetchCurrentGames(username: string): Promise<LiveGame[]> {
     const data = await this.fetchJsonWithRetry<{ games: ChessComGame[] }>(
       `${BASE_URL}/player/${encodeURIComponent(username)}/games`,
-      `Failed to fetch games for "${username}"`
+      `Failed to fetch games for "${username}"`,
     );
     const games: LiveGame[] = [];
 
@@ -142,23 +144,23 @@ export class ChessComService {
 
   private transformGame(raw: ChessComGame): LiveGame | null {
     // Derive a stable gameId from the URL
-    const gameId = raw.url?.split('/').pop() ?? '';
+    const gameId = raw.url?.split("/").pop() ?? "";
     if (!gameId) return null;
 
-    const fen = raw.fen ?? '';
+    const fen = raw.fen ?? "";
     if (!isValidFen(fen)) return null;
 
     const white: Player = {
-      username: raw.white?.username ?? '',
+      username: raw.white?.username ?? "",
       rating: raw.white?.rating ?? 0,
-      color: 'white',
+      color: "white",
       result: this.normalizeResult(raw.white?.result),
     };
 
     const black: Player = {
-      username: raw.black?.username ?? '',
+      username: raw.black?.username ?? "",
       rating: raw.black?.rating ?? 0,
-      color: 'black',
+      color: "black",
       result: this.normalizeResult(raw.black?.result),
     };
 
@@ -178,10 +180,10 @@ export class ChessComService {
       white,
       black,
       fen,
-      pgn: raw.pgn ?? '',
-      timeControl: raw.time_control ?? '',
+      pgn: raw.pgn ?? "",
+      timeControl: raw.time_control ?? "",
       timeClass,
-      rules: raw.rules ?? 'chess',
+      rules: raw.rules ?? "chess",
       startTime: raw.start_time ?? 0,
       lastMoveTime: raw.last_activity ?? raw.end_time ?? 0,
       isFinished,
@@ -197,46 +199,57 @@ export class ChessComService {
       name: raw.name,
       avatar: raw.avatar,
       followers: raw.followers ?? 0,
-      country: raw.country ?? '',
+      country: raw.country ?? "",
       lastOnline: raw.last_online ?? 0,
       joined: raw.joined ?? 0,
-      status: raw.status ?? '',
+      status: raw.status ?? "",
       isStreaming: raw.is_streamer ?? false,
     };
   }
 
-  private normalizeResult(
-    result?: string
-  ): Player['result'] | undefined {
+  private normalizeResult(result?: string): Player["result"] | undefined {
     if (!result) return undefined;
-    const map: Record<string, Player['result']> = {
-      win: 'win',
-      loss: 'loss',
-      draw: 'draw',
-      timeout: 'timeout',
-      resigned: 'resigned',
-      abandoned: 'abandoned',
-      checkmated: 'loss',
-      stalemate: 'draw',
-      agreed: 'draw',
-      repetition: 'draw',
-      insufficient: 'draw',
-      '50move': 'draw',
-      timevsinsufficient: 'draw',
+    const map: Record<string, Player["result"]> = {
+      win: "win",
+      loss: "loss",
+      draw: "draw",
+      timeout: "timeout",
+      resigned: "resigned",
+      abandoned: "abandoned",
+      checkmated: "loss",
+      stalemate: "draw",
+      agreed: "draw",
+      repetition: "draw",
+      insufficient: "draw",
+      "50move": "draw",
+      timevsinsufficient: "draw",
     };
     return map[result.toLowerCase()];
   }
 
   private isTerminalResult(result: string): boolean {
     const terminal = new Set([
-      'win', 'loss', 'draw', 'timeout', 'resigned', 'abandoned',
-      'checkmated', 'stalemate', 'agreed', 'repetition', 'insufficient',
-      '50move', 'timevsinsufficient',
+      "win",
+      "loss",
+      "draw",
+      "timeout",
+      "resigned",
+      "abandoned",
+      "checkmated",
+      "stalemate",
+      "agreed",
+      "repetition",
+      "insufficient",
+      "50move",
+      "timevsinsufficient",
     ]);
     return terminal.has(result.toLowerCase());
   }
 
-  private async fetchJsonWithRetry<T>(url: string, errorContext: string): Promise<T> {
+  private async fetchJsonWithRetry<T>(
+    url: string,
+    errorContext: string,
+  ): Promise<T> {
     let lastError: Error | null = null;
 
     for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt++) {
@@ -250,7 +263,9 @@ export class ChessComService {
             throw new Error(`${errorContext}: HTTP 429`);
           }
 
-          const retryAfterMs = this.parseRetryAfterMs(response.headers.get('Retry-After'));
+          const retryAfterMs = this.parseRetryAfterMs(
+            response.headers.get("Retry-After"),
+          );
           const fallbackBackoff = this.getExponentialBackoffMs(attempt);
           await this.sleepFn(retryAfterMs ?? fallbackBackoff);
           continue;
@@ -266,7 +281,7 @@ export class ChessComService {
           throw new Error(`${errorContext}: HTTP ${response.status}`);
         }
 
-        return await response.json() as T;
+        return (await response.json()) as T;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         if (/HTTP\s\d+$/i.test(lastError.message)) {
@@ -285,7 +300,9 @@ export class ChessComService {
 
   private async enforceRateLimit(): Promise<void> {
     const now = this.nowFn();
-    this.requestTimestamps = this.requestTimestamps.filter((ts) => now - ts < RATE_LIMIT_WINDOW_MS);
+    this.requestTimestamps = this.requestTimestamps.filter(
+      (ts) => now - ts < RATE_LIMIT_WINDOW_MS,
+    );
 
     if (this.requestTimestamps.length >= MAX_REQUESTS_PER_WINDOW) {
       const oldest = this.requestTimestamps[0];
@@ -320,11 +337,14 @@ export class ChessComService {
     return BASE_BACKOFF_MS * 2 ** (boundedAttempt - 1);
   }
 
-  private normalizeTimeClass(
-    timeClass?: string
-  ): LiveGame['timeClass'] {
-    const valid = new Set<LiveGame['timeClass']>(['bullet', 'blitz', 'rapid', 'daily']);
-    const tc = (timeClass ?? '').toLowerCase() as LiveGame['timeClass'];
-    return valid.has(tc) ? tc : 'rapid';
+  private normalizeTimeClass(timeClass?: string): LiveGame["timeClass"] {
+    const valid = new Set<LiveGame["timeClass"]>([
+      "bullet",
+      "blitz",
+      "rapid",
+      "daily",
+    ]);
+    const tc = (timeClass ?? "").toLowerCase() as LiveGame["timeClass"];
+    return valid.has(tc) ? tc : "rapid";
   }
 }
