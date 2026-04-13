@@ -28,11 +28,18 @@ class FakeProcess {
   readonly commands: string[] = [];
 
   private readonly exitListeners = new Set<ExitHandler>();
+  private readonly onCommand?: (command: string, process: FakeProcess) => void;
+
+  constructor(onCommand?: (command: string, process: FakeProcess) => void) {
+    this.onCommand = onCommand;
+  }
 
   readonly stdin = {
     write: (data: string): void => {
       const command = data.trim();
       this.commands.push(command);
+
+      this.onCommand?.(command, this);
 
       if (command === "uci") {
         this.stdout.emit("id name Stockfish\nuciok\n");
@@ -125,5 +132,130 @@ describe("StockfishService", () => {
     process.emitExit(1, null);
 
     expect(service.isInitialized()).toBe(false);
+  });
+
+  it("analyzes a position and parses bestmove, cp score, and principal variation", async () => {
+    const process = new FakeProcess((command, p) => {
+      if (command.startsWith("go depth 18")) {
+        p.stdout.emit("info depth 18 score cp 47 pv e2e4 e7e5 g1f3\n");
+        p.stdout.emit("bestmove e2e4 ponder e7e5\n");
+      }
+    });
+
+    const service = new StockfishService({ spawnEngine: () => process });
+    await service.initialize();
+
+    const result = await service.analyzePosition(
+      "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      18,
+    );
+
+    expect(result.bestMove).toBe("e2e4");
+    expect(result.evaluation).toBe(47);
+    expect(result.depth).toBe(18);
+    expect(result.principalVariation).toEqual(["e2e4", "e7e5", "g1f3"]);
+    expect(result.engineVersion).toBe("Stockfish");
+  });
+
+  it("parses mate score from engine output", async () => {
+    const process = new FakeProcess((command, p) => {
+      if (command.startsWith("go depth 12")) {
+        p.stdout.emit("info depth 12 score mate 3 pv h7h8q\n");
+        p.stdout.emit("bestmove h7h8q\n");
+      }
+    });
+
+    const service = new StockfishService({ spawnEngine: () => process });
+    await service.initialize();
+
+    const result = await service.analyzePosition(
+      "7k/7P/7K/8/8/8/8/8 w - - 0 1",
+      12,
+    );
+
+    expect(result.bestMove).toBe("h7h8q");
+    expect(result.mate).toBe(3);
+    expect(result.evaluation).toBe(10000);
+  });
+
+  it("fails analysis when bestmove is not returned before timeout", async () => {
+    vi.useFakeTimers();
+
+    const process = new FakeProcess((command, p) => {
+      if (command.startsWith("go depth 10")) {
+        p.stdout.emit("info depth 10 score cp 15 pv e2e4 e7e5\n");
+      }
+    });
+
+    const service = new StockfishService({
+      spawnEngine: () => process,
+      analysisTimeoutMs: 25,
+      maxRestartAttempts: 0,
+    });
+    await service.initialize();
+
+    const analysisPromise = service.analyzePosition(
+      "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      10,
+    );
+
+    const rejection = expect(analysisPromise).rejects.toThrow(
+      "Stockfish analysis timed out after 25ms",
+    );
+    await vi.advanceTimersByTimeAsync(30);
+    await rejection;
+  });
+
+  it("automatically restarts engine after unexpected exit", async () => {
+    const first = new FakeProcess();
+    const second = new FakeProcess();
+    const spawnEngine = vi
+      .fn()
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second);
+
+    const service = new StockfishService({ spawnEngine });
+    await service.initialize("C:/stockfish.exe");
+
+    first.emitExit(1, null);
+    await Promise.resolve();
+  await Promise.resolve();
+
+    expect(spawnEngine).toHaveBeenCalledTimes(2);
+    expect(second.commands).toEqual(["uci", "isready"]);
+    expect(service.isInitialized()).toBe(true);
+  });
+
+  it("retries analysis after crash and succeeds on restarted engine", async () => {
+    const first = new FakeProcess((command, p) => {
+      if (command.startsWith("go depth 16")) {
+        p.emitExit(1, null);
+      }
+    });
+
+    const second = new FakeProcess((command, p) => {
+      if (command.startsWith("go depth 16")) {
+        p.stdout.emit("info depth 16 score cp 88 pv e2e4 e7e5\n");
+        p.stdout.emit("bestmove e2e4\n");
+      }
+    });
+
+    const spawnEngine = vi
+      .fn()
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second);
+
+    const service = new StockfishService({ spawnEngine });
+    await service.initialize();
+
+    const result = await service.analyzePosition(
+      "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      16,
+    );
+
+    expect(spawnEngine).toHaveBeenCalledTimes(2);
+    expect(result.bestMove).toBe("e2e4");
+    expect(result.evaluation).toBe(88);
+    expect(result.depth).toBe(16);
   });
 });
