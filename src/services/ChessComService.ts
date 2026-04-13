@@ -6,6 +6,14 @@ import { isValidFen } from '../utils/fenValidator';
 
 const BASE_URL = 'https://api.chess.com/pub';
 const GAME_CACHE_TTL = 45; // seconds (within 30-60s range)
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const MAX_REQUESTS_PER_WINDOW = 300;
+const MAX_FETCH_ATTEMPTS = 3;
+const BASE_BACKOFF_MS = 1_000;
+
+interface FetchLike {
+  (input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+}
 
 /** Raw game object returned by Chess.com API */
 interface ChessComGame {
@@ -48,9 +56,23 @@ interface ChessComPlayerProfile {
 
 export class ChessComService {
   private cache: CacheManager;
+  private readonly fetchImpl: FetchLike;
+  private readonly sleepFn: (ms: number) => Promise<void>;
+  private readonly nowFn: () => number;
+  private requestTimestamps: number[] = [];
 
-  constructor(cache?: CacheManager) {
+  constructor(
+    cache?: CacheManager,
+    deps?: {
+      fetchImpl?: FetchLike;
+      sleepFn?: (ms: number) => Promise<void>;
+      nowFn?: () => number;
+    }
+  ) {
     this.cache = cache ?? new CacheManager();
+    this.fetchImpl = deps?.fetchImpl ?? fetch;
+    this.sleepFn = deps?.sleepFn ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.nowFn = deps?.nowFn ?? Date.now;
   }
 
   /**
@@ -80,13 +102,10 @@ export class ChessComService {
    * Fetches the player profile for the given username.
    */
   async fetchPlayerProfile(username: string): Promise<PlayerProfile> {
-    const response = await fetch(`${BASE_URL}/player/${encodeURIComponent(username)}`);
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch player profile for "${username}": HTTP ${response.status}`);
-    }
-
-    const data: ChessComPlayerProfile = await response.json();
+    const data = await this.fetchJsonWithRetry<ChessComPlayerProfile>(
+      `${BASE_URL}/player/${encodeURIComponent(username)}`,
+      `Failed to fetch player profile for "${username}"`
+    );
     return this.transformPlayerProfile(data);
   }
 
@@ -94,17 +113,10 @@ export class ChessComService {
    * Fetches all current (ongoing) games for the given username.
    */
   async fetchCurrentGames(username: string): Promise<LiveGame[]> {
-    const response = await fetch(
-      `${BASE_URL}/player/${encodeURIComponent(username)}/games`
+    const data = await this.fetchJsonWithRetry<{ games: ChessComGame[] }>(
+      `${BASE_URL}/player/${encodeURIComponent(username)}/games`,
+      `Failed to fetch games for "${username}"`
     );
-
-    if (!response.ok) {
-      throw new Error(
-        `Failed to fetch games for "${username}": HTTP ${response.status}`
-      );
-    }
-
-    const data: { games: ChessComGame[] } = await response.json();
     const games: LiveGame[] = [];
 
     for (const raw of data.games ?? []) {
@@ -152,12 +164,11 @@ export class ChessComService {
 
     if (!white.username || !black.username) return null;
 
+    const whiteResult = raw.white?.result;
+    const blackResult = raw.black?.result;
     const isFinished =
-      raw.white?.result !== undefined &&
-      raw.white.result !== 'timeout' &&
-      raw.white.result !== '' &&
-      // Chess.com marks ongoing games with no result or specific values
-      this.isTerminalResult(raw.white.result);
+      (whiteResult ? this.isTerminalResult(whiteResult) : false) ||
+      (blackResult ? this.isTerminalResult(blackResult) : false);
 
     const timeClass = this.normalizeTimeClass(raw.time_class);
 
@@ -174,7 +185,7 @@ export class ChessComService {
       startTime: raw.start_time ?? 0,
       lastMoveTime: raw.last_activity ?? raw.end_time ?? 0,
       isFinished,
-      result: isFinished ? raw.white?.result : undefined,
+      result: isFinished ? (whiteResult ?? blackResult) : undefined,
     };
   }
 
@@ -223,6 +234,90 @@ export class ChessComService {
       '50move', 'timevsinsufficient',
     ]);
     return terminal.has(result.toLowerCase());
+  }
+
+  private async fetchJsonWithRetry<T>(url: string, errorContext: string): Promise<T> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt++) {
+      await this.enforceRateLimit();
+
+      try {
+        const response = await this.fetchImpl(url);
+
+        if (response.status === 429) {
+          if (attempt === MAX_FETCH_ATTEMPTS) {
+            throw new Error(`${errorContext}: HTTP 429`);
+          }
+
+          const retryAfterMs = this.parseRetryAfterMs(response.headers.get('Retry-After'));
+          const fallbackBackoff = this.getExponentialBackoffMs(attempt);
+          await this.sleepFn(retryAfterMs ?? fallbackBackoff);
+          continue;
+        }
+
+        if (!response.ok) {
+          // Retry on transient server errors only.
+          if (response.status >= 500 && attempt < MAX_FETCH_ATTEMPTS) {
+            await this.sleepFn(this.getExponentialBackoffMs(attempt));
+            continue;
+          }
+
+          throw new Error(`${errorContext}: HTTP ${response.status}`);
+        }
+
+        return await response.json() as T;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (/HTTP\s\d+$/i.test(lastError.message)) {
+          throw lastError;
+        }
+        if (attempt === MAX_FETCH_ATTEMPTS) {
+          break;
+        }
+
+        await this.sleepFn(this.getExponentialBackoffMs(attempt));
+      }
+    }
+
+    throw lastError ?? new Error(`${errorContext}: request failed`);
+  }
+
+  private async enforceRateLimit(): Promise<void> {
+    const now = this.nowFn();
+    this.requestTimestamps = this.requestTimestamps.filter((ts) => now - ts < RATE_LIMIT_WINDOW_MS);
+
+    if (this.requestTimestamps.length >= MAX_REQUESTS_PER_WINDOW) {
+      const oldest = this.requestTimestamps[0];
+      const waitMs = oldest + RATE_LIMIT_WINDOW_MS - now;
+      if (waitMs > 0) {
+        await this.sleepFn(waitMs);
+      }
+    }
+
+    const recordedAt = this.nowFn();
+    this.requestTimestamps.push(recordedAt);
+  }
+
+  private parseRetryAfterMs(retryAfterHeader: string | null): number | null {
+    if (!retryAfterHeader) return null;
+
+    const retryAfterSeconds = Number.parseInt(retryAfterHeader, 10);
+    if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0) {
+      return retryAfterSeconds * 1000;
+    }
+
+    const retryAfterDate = Date.parse(retryAfterHeader);
+    if (!Number.isNaN(retryAfterDate)) {
+      return Math.max(0, retryAfterDate - this.nowFn());
+    }
+
+    return null;
+  }
+
+  private getExponentialBackoffMs(attempt: number): number {
+    const boundedAttempt = Math.max(1, attempt);
+    return BASE_BACKOFF_MS * 2 ** (boundedAttempt - 1);
   }
 
   private normalizeTimeClass(
