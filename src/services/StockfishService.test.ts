@@ -219,7 +219,7 @@ describe("StockfishService", () => {
 
     first.emitExit(1, null);
     await Promise.resolve();
-  await Promise.resolve();
+    await Promise.resolve();
 
     expect(spawnEngine).toHaveBeenCalledTimes(2);
     expect(second.commands).toEqual(["uci", "isready"]);

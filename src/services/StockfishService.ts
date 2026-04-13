@@ -160,7 +160,10 @@ export class StockfishService {
       try {
         return await this.analyzeOnce(safeFen, depth);
       } catch (error) {
-        if (!this.isRecoverableEngineError(error) || attempt === this.maxRestartAttempts) {
+        if (
+          !this.isRecoverableEngineError(error) ||
+          attempt === this.maxRestartAttempts
+        ) {
           throw error;
         }
 
@@ -169,10 +172,15 @@ export class StockfishService {
       }
     }
 
-    throw new Error("Failed to analyze position after engine recovery attempts");
+    throw new Error(
+      "Failed to analyze position after engine recovery attempts",
+    );
   }
 
-  private async analyzeOnce(safeFen: string, depth: number): Promise<AnalysisResult> {
+  private async analyzeOnce(
+    safeFen: string,
+    depth: number,
+  ): Promise<AnalysisResult> {
     if (!this.initialized || !this.process) {
       throw new Error("Stockfish is not initialized");
     }
@@ -256,7 +264,9 @@ export class StockfishService {
     }
 
     if (this.restartAttempts >= this.maxRestartAttempts) {
-      throw new Error(`Stockfish restart limit reached (${this.maxRestartAttempts})`);
+      throw new Error(
+        `Stockfish restart limit reached (${this.maxRestartAttempts})`,
+      );
     }
 
     this.restartAttempts += 1;
@@ -299,7 +309,9 @@ export class StockfishService {
 
       const timeout = setTimeout(() => {
         this.pendingWaiters = this.pendingWaiters.filter((w) => w !== waiter);
-        reject(new Error(`Stockfish ${context} timed out after ${timeoutMs}ms`));
+        reject(
+          new Error(`Stockfish ${context} timed out after ${timeoutMs}ms`),
+        );
       }, timeoutMs);
 
       const wrappedResolve = (line: string): void => {
@@ -340,7 +352,10 @@ export class StockfishService {
     return match[1];
   }
 
-  private getEvaluation(infoLine?: string): { evaluation: number; mate?: number } {
+  private getEvaluation(infoLine?: string): {
+    evaluation: number;
+    mate?: number;
+  } {
     if (!infoLine) {
       return { evaluation: 0 };
     }
